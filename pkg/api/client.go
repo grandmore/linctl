@@ -31,9 +31,10 @@ type GraphQLResponse struct {
 }
 
 type GraphQLError struct {
-	Message   string                 `json:"message"`
-	Locations []GraphQLErrorLocation `json:"locations,omitempty"`
-	Path      []interface{}          `json:"path,omitempty"`
+	Message    string                 `json:"message"`
+	Locations  []GraphQLErrorLocation `json:"locations,omitempty"`
+	Path       []interface{}          `json:"path,omitempty"`
+	Extensions map[string]interface{} `json:"extensions,omitempty"`
 }
 
 type GraphQLErrorLocation struct {
@@ -109,6 +110,51 @@ func (c *Client) Execute(ctx context.Context, query string, variables map[string
 	}
 
 	return nil
+}
+
+// ExecuteRaw performs a GraphQL request and returns the raw response,
+// including any GraphQL errors returned by the API.
+func (c *Client) ExecuteRaw(ctx context.Context, query string, variables map[string]interface{}) (*GraphQLResponse, error) {
+	reqBody := GraphQLRequest{
+		Query:     query,
+		Variables: variables,
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", c.authHeader)
+	req.Header.Set("User-Agent", "linctl/0.1.0")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var gqlResp GraphQLResponse
+	if err := json.Unmarshal(body, &gqlResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &gqlResp, nil
 }
 
 // Rate limiting helper
